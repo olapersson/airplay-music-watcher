@@ -55,6 +55,7 @@ func NewAirplayMusicActionRunner(configFilePath string) (*AirplayMusicActionRunn
 		}
 	}
 	parsedRunner.lastKnownStateOfDevice = make(map[string]LastKnownState)
+	log.Printf("Loaded %d AirPlay actions from %s", len(parsedRunner.Actions), configFilePath)
 
 	return &parsedRunner, nil
 }
@@ -78,9 +79,11 @@ func (r *AirplayMusicActionRunner) checkAndSetAlreadyDispatched(deviceName strin
 
 func (r *AirplayMusicActionRunner) RunActionForDeviceState(deviceName string, isPlaying bool) {
 	if r.checkAndSetAlreadyDispatched(deviceName, isPlaying) {
+		log.Printf("Skipping duplicate state device=%q playing=%t", deviceName, isPlaying)
 		// we already sent this, can skip
 		return
 	}
+	log.Printf("State change device=%q playing=%t", deviceName, isPlaying)
 	for _, action := range r.Actions {
 		if action.DeviceName == deviceName {
 			if (isPlaying && action.ActionName == ACTION_NAME_START_PLAYING) || (!isPlaying && action.ActionName == ACTION_NAME_END_PLAYING) {
@@ -91,7 +94,7 @@ func (r *AirplayMusicActionRunner) RunActionForDeviceState(deviceName string, is
 }
 
 func (r *AirplayMusicActionRunner) runActionForDevice(deviceName string, isPlaying bool, action AirplayCommandLineAction) {
-	log.Printf("Running command: %s\n", action.Command)
+	log.Printf("Running command for device=%q playing=%t action=%q command=%s", deviceName, isPlaying, action.ActionName, action.Command)
 	cmd := exec.Command("sh", "-c", action.Command)
 	if runtime.GOOS == "windows" {
 		// Need someome to test this. From stack overflow, but no windows box...
@@ -99,6 +102,6 @@ func (r *AirplayMusicActionRunner) runActionForDevice(deviceName string, isPlayi
 	}
 
 	if err := cmd.Run(); err != nil {
-		log.Printf("Error running command: %s\n", action.Command)
+		log.Printf("Error running command for device=%q action=%q: %v", deviceName, action.ActionName, err)
 	}
 }

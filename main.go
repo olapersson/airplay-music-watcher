@@ -36,6 +36,7 @@ func main() {
 			// If you manually disconnect airplay from a device, you get the off immediately
 			// https://github.com/openairplay/airplay-spec/blob/master/src/status_flags.md
 			isPlaying := (DeviceIsPlayingBitmask & entry.Flags) > 0
+			log.Printf("AirPlay event device=%q flags=%#x raw=%q playing=%t", entry.DeviceName, entry.Flags, entry.RawFlags, isPlaying)
 			actionRunner.RunActionForDeviceState(entry.DeviceName, isPlaying)
 		}
 	}()

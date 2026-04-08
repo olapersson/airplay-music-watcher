@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/miekg/dns"
 	"golang.org/x/net/ipv4"
@@ -23,6 +24,7 @@ const (
 	ipv6mdns              = "ff02::fb"
 	mdnsPort              = 5353
 	forceUnicastResponses = false
+	airplayServiceSuffix  = "._airplay._tcp.local."
 )
 
 var (
@@ -46,6 +48,66 @@ type AirplayFlagsEntry struct {
 	DeviceName string
 	RawFlags   string
 	Flags      uint64
+}
+
+func parseAirplayFlagsEntry(hostName string, txtRecords []string) *AirplayFlagsEntry {
+	if !strings.Contains(hostName, airplayServiceSuffix) {
+		return nil
+	}
+
+	firstPeriodIndex := strings.Index(hostName, ".")
+	if firstPeriodIndex <= 0 {
+		return nil
+	}
+
+	for _, txt := range txtRecords {
+		if !strings.HasPrefix(txt, "flags=0x") {
+			continue
+		}
+
+		flagsInt, err := strconv.ParseUint(txt[8:], 16, 64)
+		if err != nil {
+			continue
+		}
+
+		return &AirplayFlagsEntry{
+			HostName:   hostName,
+			RawFlags:   txt,
+			Flags:      flagsInt,
+			DeviceName: unescapeDNSLabel(hostName[:firstPeriodIndex]),
+		}
+	}
+
+	return nil
+}
+
+func unescapeDNSLabel(label string) string {
+	var builder strings.Builder
+	builder.Grow(len(label))
+
+	for i := 0; i < len(label); i++ {
+		if label[i] != '\\' || i+1 >= len(label) {
+			builder.WriteByte(label[i])
+			continue
+		}
+
+		if i+3 < len(label) &&
+			unicode.IsDigit(rune(label[i+1])) &&
+			unicode.IsDigit(rune(label[i+2])) &&
+			unicode.IsDigit(rune(label[i+3])) {
+			octalValue, err := strconv.ParseUint(label[i+1:i+4], 8, 8)
+			if err == nil {
+				builder.WriteByte(byte(octalValue))
+				i += 3
+				continue
+			}
+		}
+
+		builder.WriteByte(label[i+1])
+		i++
+	}
+
+	return builder.String()
 }
 
 // ServiceEntry is returned after we query for a service
@@ -329,33 +391,12 @@ func (c *client) query(params *QueryParam) error {
 					inp.Info = strings.Join(rr.Txt, "|")
 					inp.InfoFields = rr.Txt
 					inp.hasTXT = true
-					for _, answer := range resp.Answer {
-						hostName := answer.Header().Name
-						if strings.Contains(hostName, "._airplay._tcp.local.") {
-							for _, txt := range rr.Txt {
-								if strings.Index(txt, "flags=") == 0 {
-									// Index 8 removes "flags=0x"
-									hexString := txt[8:]
-									flagsInt, err := strconv.ParseUint(hexString, 16, 64)
-									if err != nil {
-										continue
-									}
-									firstPeriodIndex := strings.Index(hostName, ".")
-									deviceName := hostName[:firstPeriodIndex]
-									airplayFlagsEvent := &AirplayFlagsEntry{
-										HostName:   hostName,
-										RawFlags:   txt,
-										Flags:      flagsInt,
-										DeviceName: deviceName,
-									}
-
-									// Send this flags event back to client
-									select {
-									case params.Entries <- airplayFlagsEvent:
-									default:
-									}
-								}
-							}
+					airplayFlagsEvent := parseAirplayFlagsEntry(rr.Hdr.Name, rr.Txt)
+					if airplayFlagsEvent != nil {
+						// Send this flags event back to client
+						select {
+						case params.Entries <- airplayFlagsEvent:
+						default:
 						}
 					}
 
